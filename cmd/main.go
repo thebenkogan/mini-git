@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"compress/zlib"
+	"crypto/sha1"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -18,12 +20,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	git := Git{root: ".bgit"}
+
 	var err error
 	switch command := os.Args[1]; command {
 	case "init":
-		err = initRepo()
+		err = git.InitRepo()
 	case "cat-file":
-		err = catFile()
+		err = git.CatFile()
+	case "hash-object":
+		err = git.HashObject()
 	default:
 		err = fmt.Errorf("Unknown command %s", command)
 	}
@@ -34,24 +40,26 @@ func main() {
 	}
 }
 
-const ROOT string = ".bgit"
+type Git struct {
+	root string
+}
 
-func initRepo() error {
-	for _, dir := range []string{filepath.Join(ROOT, "objects"), filepath.Join(ROOT, "refs")} {
+func (g *Git) InitRepo() error {
+	for _, dir := range []string{filepath.Join(g.root, "objects"), filepath.Join(g.root, "refs")} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("Error creating directory %s: %w", dir, err)
 		}
 	}
 
 	headFileContents := []byte("ref: refs/heads/main\n")
-	if err := os.WriteFile(filepath.Join(ROOT, "HEAD"), headFileContents, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(g.root, "HEAD"), headFileContents, 0644); err != nil {
 		return fmt.Errorf("Error creating HEAD: %w", err)
 	}
 
 	return nil
 }
 
-func catFile() error {
+func (g *Git) CatFile() error {
 	catFileCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
 	shaPtr := catFileCmd.String("p", "", "sha hash of the blob")
 	_ = catFileCmd.Parse(os.Args[2:])
@@ -61,18 +69,19 @@ func catFile() error {
 	}
 
 	hash := *shaPtr
-	file, err := os.Open(filepath.Join(ROOT, "objects", hash[:2], hash[2:]))
+	file, err := os.Open(filepath.Join(g.root, "objects", hash[:2], hash[2:]))
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
 	defer file.Close()
 
 	zr, _ := zlib.NewReader(file)
+	defer zr.Close()
 	reader := bufio.NewReader(zr)
 
 	s, err := reader.ReadString('\x00')
 	if err != nil {
-		return fmt.Errorf("Failed read object header: %w", err)
+		return fmt.Errorf("Failed to read object header: %w", err)
 	}
 
 	trimmed := strings.TrimSuffix(s, "\x00")
@@ -84,6 +93,55 @@ func catFile() error {
 	size, _ := strconv.Atoi(split[1])
 	if _, err := io.CopyN(os.Stdout, reader, int64(size)); err != nil {
 		return fmt.Errorf("Failed to write contents to stdout: %w", err)
+	}
+
+	return nil
+}
+
+func (g *Git) HashObject() error {
+	hashObjectCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
+	writePtr := hashObjectCmd.Bool("w", false, "write the blob to the objects store")
+	_ = hashObjectCmd.Parse(os.Args[2:])
+
+	path := hashObjectCmd.Args()[0]
+	source, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("Failed to open object: %w", err)
+	}
+	defer source.Close()
+	info, _ := source.Stat()
+
+	hash := sha1.New()
+	hash.Write([]byte(fmt.Sprintf("blob %d\x00", info.Size())))
+	if _, err := io.Copy(hash, source); err != nil {
+		return fmt.Errorf("Failed to read object: %w", err)
+	}
+
+	sha := hex.EncodeToString(hash.Sum(nil))
+	fmt.Println(sha)
+
+	if *writePtr {
+		if _, err := source.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("Failed to reset file: %w", err)
+		}
+
+		dir := filepath.Join(g.root, "objects", sha[:2])
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("Failed to create object directory: %w", err)
+		}
+
+		object, err := os.Create(filepath.Join(dir, sha[2:]))
+		if err != nil {
+			return fmt.Errorf("Failed to create object file: %w", err)
+		}
+		defer object.Close()
+
+		zw := zlib.NewWriter(object)
+		_, _ = zw.Write([]byte(fmt.Sprintf("blob %d\x00", info.Size())))
+		if _, err := io.Copy(zw, source); err != nil {
+			return fmt.Errorf("Failed to write object: %w", err)
+		}
+		zw.Close()
 	}
 
 	return nil
