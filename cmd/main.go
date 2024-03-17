@@ -20,12 +20,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	git := Git{root: ".bgit"}
+	git := Git{root: ".bgit", output: os.Stdout}
 
 	var err error
 	switch command := os.Args[1]; command {
 	case "init":
-		err = git.InitRepo()
+		err = git.Init()
 	case "cat-file":
 		catFileCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
 		shaPtr := catFileCmd.String("p", "", "sha hash of the blob")
@@ -47,10 +47,11 @@ func main() {
 }
 
 type Git struct {
-	root string
+	root   string
+	output io.Writer
 }
 
-func (g *Git) InitRepo() error {
+func (g *Git) Init() error {
 	for _, dir := range []string{filepath.Join(g.root, "objects"), filepath.Join(g.root, "refs")} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("Error creating directory %s: %w", dir, err)
@@ -92,7 +93,7 @@ func (g *Git) CatFile(sha string) error {
 	}
 
 	size, _ := strconv.Atoi(split[1])
-	if _, err := io.CopyN(os.Stdout, reader, int64(size)); err != nil {
+	if _, err := io.CopyN(g.output, reader, int64(size)); err != nil {
 		return fmt.Errorf("Failed to write contents to stdout: %w", err)
 	}
 
@@ -114,7 +115,7 @@ func (g *Git) HashObject(path string, write bool) error {
 	}
 
 	sha := hex.EncodeToString(hash.Sum(nil))
-	fmt.Println(sha)
+	_, _ = g.output.Write([]byte(sha))
 
 	if write {
 		if _, err := source.Seek(0, io.SeekStart); err != nil {
