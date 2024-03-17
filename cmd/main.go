@@ -27,9 +27,15 @@ func main() {
 	case "init":
 		err = git.InitRepo()
 	case "cat-file":
-		err = git.CatFile()
+		catFileCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
+		shaPtr := catFileCmd.String("p", "", "sha hash of the blob")
+		_ = catFileCmd.Parse(os.Args[2:])
+		err = git.CatFile(*shaPtr)
 	case "hash-object":
-		err = git.HashObject()
+		hashObjectCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
+		writePtr := hashObjectCmd.Bool("w", false, "write the blob to the objects store")
+		_ = hashObjectCmd.Parse(os.Args[2:])
+		err = git.HashObject(hashObjectCmd.Args()[0], *writePtr)
 	default:
 		err = fmt.Errorf("Unknown command %s", command)
 	}
@@ -59,17 +65,12 @@ func (g *Git) InitRepo() error {
 	return nil
 }
 
-func (g *Git) CatFile() error {
-	catFileCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
-	shaPtr := catFileCmd.String("p", "", "sha hash of the blob")
-	_ = catFileCmd.Parse(os.Args[2:])
-
-	if *shaPtr == "" {
-		return fmt.Errorf("No SHA provided")
+func (g *Git) CatFile(sha string) error {
+	if len(sha) != 40 {
+		return fmt.Errorf("Invalid SHA")
 	}
 
-	hash := *shaPtr
-	file, err := os.Open(filepath.Join(g.root, "objects", hash[:2], hash[2:]))
+	file, err := os.Open(filepath.Join(g.root, "objects", sha[:2], sha[2:]))
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
@@ -98,12 +99,7 @@ func (g *Git) CatFile() error {
 	return nil
 }
 
-func (g *Git) HashObject() error {
-	hashObjectCmd := flag.NewFlagSet("cat-file", flag.ExitOnError)
-	writePtr := hashObjectCmd.Bool("w", false, "write the blob to the objects store")
-	_ = hashObjectCmd.Parse(os.Args[2:])
-
-	path := hashObjectCmd.Args()[0]
+func (g *Git) HashObject(path string, write bool) error {
 	source, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
@@ -120,7 +116,7 @@ func (g *Git) HashObject() error {
 	sha := hex.EncodeToString(hash.Sum(nil))
 	fmt.Println(sha)
 
-	if *writePtr {
+	if write {
 		if _, err := source.Seek(0, io.SeekStart); err != nil {
 			return fmt.Errorf("Failed to reset file: %w", err)
 		}
