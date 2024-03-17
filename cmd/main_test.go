@@ -5,13 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thebenkogan/git/internal/git"
 )
 
 func TestGit(t *testing.T) {
 	testDir := t.TempDir()
-
 	outputBuf := bytes.NewBuffer(nil)
-	git := Git{root: testDir, output: outputBuf}
+	git := git.Git{Root: testDir, Output: outputBuf}
 
 	t.Run("init", func(t *testing.T) {
 		if err := git.Init(); err != nil {
