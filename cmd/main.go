@@ -30,6 +30,11 @@ func main() {
 		writePtr := hashObjectCmd.Bool("w", false, "write the blob to the objects store")
 		_ = hashObjectCmd.Parse(os.Args[2:])
 		err = git.HashObject(hashObjectCmd.Args()[0], *writePtr)
+	case "ls-tree":
+		lsTreeCmd := flag.NewFlagSet("ls-tree", flag.ExitOnError)
+		nameOnlyPtr := lsTreeCmd.Bool("name-only", false, "print names only")
+		_ = lsTreeCmd.Parse(os.Args[2:])
+		err = git.LsTree(lsTreeCmd.Args()[0], *nameOnlyPtr)
 	default:
 		err = fmt.Errorf("Unknown command %s", command)
 	}

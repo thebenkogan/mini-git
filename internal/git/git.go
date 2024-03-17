@@ -1,7 +1,6 @@
 package git
 
 import (
-	"bufio"
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
@@ -9,8 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/thebenkogan/git/internal/objects"
 )
 
 type Git struct {
@@ -34,34 +34,17 @@ func (g *Git) Init() error {
 }
 
 func (g *Git) CatFile(sha string) error {
-	if len(sha) != 40 {
-		return fmt.Errorf("Invalid SHA")
-	}
-
-	file, err := os.Open(filepath.Join(g.Root, "objects", sha[:2], sha[2:]))
+	reader, objectType, size, err := objects.ReadObject(g.Root, sha)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
-	defer file.Close()
 
-	zr, _ := zlib.NewReader(file)
-	defer zr.Close()
-	reader := bufio.NewReader(zr)
-
-	s, err := reader.ReadString('\x00')
-	if err != nil {
-		return fmt.Errorf("Failed to read object header: %w", err)
+	if objectType != "blob" {
+		return fmt.Errorf("Unsupported object type: %s", objectType)
 	}
 
-	trimmed := strings.TrimSuffix(s, "\x00")
-	split := strings.Split(trimmed, " ")
-	if split[0] != "blob" {
-		return fmt.Errorf("Unsupported object type: %s", split[0])
-	}
-
-	size, _ := strconv.Atoi(split[1])
 	if _, err := io.CopyN(g.Output, reader, int64(size)); err != nil {
-		return fmt.Errorf("Failed to write contents to stdout: %w", err)
+		return fmt.Errorf("Failed to write contents to output: %w", err)
 	}
 
 	return nil
@@ -106,6 +89,50 @@ func (g *Git) HashObject(path string, write bool) error {
 			return fmt.Errorf("Failed to write object: %w", err)
 		}
 		zw.Close()
+	}
+
+	return nil
+}
+
+func (g *Git) LsTree(sha string, nameOnly bool) error {
+	reader, objectType, size, err := objects.ReadObject(g.Root, sha)
+	if err != nil {
+		return fmt.Errorf("Failed to open object: %w", err)
+	}
+
+	if objectType != "tree" {
+		return fmt.Errorf("Expected tree object, got: %s", objectType)
+	}
+
+	for size > 0 {
+		bytes, err := reader.ReadBytes('\x00')
+		if err != nil {
+			return fmt.Errorf("Failed to tree entry: %w", err)
+		}
+		trimmed := strings.TrimSuffix(string(bytes), "\x00")
+
+		mode, name, _ := strings.Cut(trimmed, " ")
+		shaBytes := make([]byte, 20)
+		if _, err := reader.Read(shaBytes); err != nil {
+			return fmt.Errorf("Failed to read entry sha: %w", err)
+		}
+
+		var line string
+		if nameOnly {
+			line = name + "\n"
+		} else {
+			objectType := "blob"
+			if mode == "040000" {
+				objectType = "tree"
+			}
+			line = fmt.Sprintf("%s %s %s\t%s\n", mode, objectType, hex.EncodeToString(shaBytes), name)
+		}
+
+		if _, err := g.Output.Write([]byte(line)); err != nil {
+			return fmt.Errorf("Failed to write entry: %w", err)
+		}
+
+		size = size - len(bytes) - 20
 	}
 
 	return nil
