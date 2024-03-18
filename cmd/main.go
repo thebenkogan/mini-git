@@ -14,7 +14,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	git := git.Git{Root: ".bgit", Output: os.Stdout}
+	git := git.Git{Root: ".", Output: os.Stdout}
 
 	var err error
 	switch command := os.Args[1]; command {
@@ -35,6 +35,8 @@ func main() {
 		nameOnlyPtr := lsTreeCmd.Bool("name-only", false, "print names only")
 		_ = lsTreeCmd.Parse(os.Args[2:])
 		err = git.LsTree(lsTreeCmd.Args()[0], *nameOnlyPtr)
+	case "write-tree":
+		err = git.WriteTree()
 	default:
 		err = fmt.Errorf("Unknown command %s", command)
 	}

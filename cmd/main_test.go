@@ -12,6 +12,7 @@ import (
 func TestGit(t *testing.T) {
 	testDir := t.TempDir()
 	outputBuf := bytes.NewBuffer(nil)
+
 	git := git.Git{Root: testDir, Output: outputBuf}
 
 	t.Run("init", func(t *testing.T) {
@@ -19,17 +20,17 @@ func TestGit(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if _, err := os.Stat(filepath.Join(testDir, "objects")); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(git.GitPath(), "objects")); os.IsNotExist(err) {
 			t.Fatal("No objects folder found after init")
 		}
-		if _, err := os.Stat(filepath.Join(testDir, "refs")); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(git.GitPath(), "refs")); os.IsNotExist(err) {
 			t.Fatal("No refs folder found after init")
 		}
-		if _, err := os.Stat(filepath.Join(testDir, "HEAD")); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(git.GitPath(), "HEAD")); os.IsNotExist(err) {
 			t.Fatal("No HEAD file found after init")
 		}
 
-		headBytes, _ := os.ReadFile(filepath.Join(testDir, "HEAD"))
+		headBytes, _ := os.ReadFile(filepath.Join(git.GitPath(), "HEAD"))
 		head := string(headBytes)
 		if head != "ref: refs/heads/main\n" {
 			t.Fatalf("HEAD file contents are incorrect: %s", head)

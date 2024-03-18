@@ -1,8 +1,6 @@
 package git
 
 import (
-	"compress/zlib"
-	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -14,19 +12,27 @@ import (
 )
 
 type Git struct {
-	Root   string
-	Output io.Writer
+	Root   string    // root directory of project
+	Output io.Writer // where to write command outputs
+}
+
+const GIT_DIR string = ".bgit"
+
+func (g *Git) GitPath() string {
+	return filepath.Join(g.Root, GIT_DIR)
 }
 
 func (g *Git) Init() error {
-	for _, dir := range []string{filepath.Join(g.Root, "objects"), filepath.Join(g.Root, "refs")} {
+	gitPath := g.GitPath()
+
+	for _, dir := range []string{filepath.Join(gitPath, "objects"), filepath.Join(gitPath, "refs")} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("Error creating directory %s: %w", dir, err)
 		}
 	}
 
 	headFileContents := []byte("ref: refs/heads/main\n")
-	if err := os.WriteFile(filepath.Join(g.Root, "HEAD"), headFileContents, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(gitPath, "HEAD"), headFileContents, 0644); err != nil {
 		return fmt.Errorf("Error creating HEAD: %w", err)
 	}
 
@@ -34,7 +40,7 @@ func (g *Git) Init() error {
 }
 
 func (g *Git) CatFile(sha string) error {
-	reader, objectType, size, err := objects.ReadObject(g.Root, sha)
+	reader, objectType, size, err := objects.ReadObject(g.GitPath(), sha)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
@@ -51,51 +57,16 @@ func (g *Git) CatFile(sha string) error {
 }
 
 func (g *Git) HashObject(path string, write bool) error {
-	source, err := os.Open(path)
+	sha, err := objects.WriteBlob(g.GitPath(), path, write)
 	if err != nil {
-		return fmt.Errorf("Failed to open object: %w", err)
+		return err
 	}
-	defer source.Close()
-	info, _ := source.Stat()
-
-	hash := sha1.New()
-	hash.Write([]byte(fmt.Sprintf("blob %d\x00", info.Size())))
-	if _, err := io.Copy(hash, source); err != nil {
-		return fmt.Errorf("Failed to read object: %w", err)
-	}
-
-	sha := hex.EncodeToString(hash.Sum(nil))
 	_, _ = g.Output.Write([]byte(sha))
-
-	if write {
-		if _, err := source.Seek(0, io.SeekStart); err != nil {
-			return fmt.Errorf("Failed to reset file: %w", err)
-		}
-
-		dir := filepath.Join(g.Root, "objects", sha[:2])
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("Failed to create object directory: %w", err)
-		}
-
-		object, err := os.Create(filepath.Join(dir, sha[2:]))
-		if err != nil {
-			return fmt.Errorf("Failed to create object file: %w", err)
-		}
-		defer object.Close()
-
-		zw := zlib.NewWriter(object)
-		_, _ = zw.Write([]byte(fmt.Sprintf("blob %d\x00", info.Size())))
-		if _, err := io.Copy(zw, source); err != nil {
-			return fmt.Errorf("Failed to write object: %w", err)
-		}
-		zw.Close()
-	}
-
 	return nil
 }
 
 func (g *Git) LsTree(sha string, nameOnly bool) error {
-	reader, objectType, size, err := objects.ReadObject(g.Root, sha)
+	reader, objectType, size, err := objects.ReadObject(g.GitPath(), sha)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
@@ -107,7 +78,7 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 	for size > 0 {
 		bytes, err := reader.ReadBytes('\x00')
 		if err != nil {
-			return fmt.Errorf("Failed to tree entry: %w", err)
+			return fmt.Errorf("Failed to read tree entry: %w", err)
 		}
 		trimmed := strings.TrimSuffix(string(bytes), "\x00")
 
@@ -122,7 +93,7 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 			line = name + "\n"
 		} else {
 			objectType := "blob"
-			if mode == "040000" {
+			if mode == objects.TreeDirMode {
 				objectType = "tree"
 			}
 			line = fmt.Sprintf("%s %s %s\t%s\n", mode, objectType, hex.EncodeToString(shaBytes), name)
@@ -135,5 +106,21 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 		size = size - len(bytes) - 20
 	}
 
+	return nil
+}
+
+func (g *Git) ignoredPaths() []string {
+	return []string{
+		g.GitPath(),
+		filepath.Join(g.Root, ".git"),
+	}
+}
+
+func (g *Git) WriteTree() error {
+	sha, err := objects.WriteTree(g.GitPath(), g.Root, g.ignoredPaths())
+	if err != nil {
+		return err
+	}
+	_, _ = g.Output.Write([]byte(sha))
 	return nil
 }

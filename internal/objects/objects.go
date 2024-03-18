@@ -2,20 +2,25 @@ package objects
 
 import (
 	"bufio"
+	"bytes"
 	"compress/zlib"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-func ReadObject(root string, sha string) (*bufio.Reader, string, int, error) {
+func ReadObject(gitPath string, sha string) (*bufio.Reader, string, int, error) {
 	if len(sha) != 40 {
 		return nil, "", 0, fmt.Errorf("Invalid SHA")
 	}
 
-	file, err := os.Open(filepath.Join(root, "objects", sha[:2], sha[2:]))
+	file, err := os.Open(filepath.Join(gitPath, "objects", sha[:2], sha[2:]))
 	if err != nil {
 		return nil, "", 0, fmt.Errorf("Failed to open object: %w", err)
 	}
@@ -35,4 +40,123 @@ func ReadObject(root string, sha string) (*bufio.Reader, string, int, error) {
 	size, _ := strconv.Atoi(split[1])
 
 	return reader, objectType, size, nil
+}
+
+func objectHeader(typ string, size int) string {
+	return fmt.Sprintf("%s %d\x00", typ, size)
+}
+
+func writeObject(gitPath string, sha string, header string, source io.Reader) error {
+	dir := filepath.Join(gitPath, "objects", sha[:2])
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("Failed to create object directory: %w", err)
+	}
+
+	object, err := os.Create(filepath.Join(dir, sha[2:]))
+	if err != nil {
+		return fmt.Errorf("Failed to create object file: %w", err)
+	}
+	defer object.Close()
+
+	zw := zlib.NewWriter(object)
+	_, _ = zw.Write([]byte(header))
+	if _, err := io.Copy(zw, source); err != nil {
+		return fmt.Errorf("Failed to write object: %w", err)
+	}
+	zw.Close()
+
+	return nil
+}
+
+func hashObject(header string, source io.ReadSeeker, reset bool) (string, error) {
+	hash := sha1.New()
+	hash.Write([]byte(header))
+	if _, err := io.Copy(hash, source); err != nil {
+		return "", fmt.Errorf("Failed to read source into hash: %w", err)
+	}
+
+	if reset {
+		if _, err := source.Seek(0, io.SeekStart); err != nil {
+			return "", fmt.Errorf("Failed to reset reader: %w", err)
+		}
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func WriteBlob(gitPath string, path string, write bool) (string, error) {
+	source, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("Failed to open object: %w", err)
+	}
+	defer source.Close()
+	info, _ := source.Stat()
+	header := objectHeader("blob", int(info.Size()))
+
+	sha, err := hashObject(header, source, write)
+	if err != nil {
+		return "", err
+	}
+
+	if write {
+		if err := writeObject(gitPath, sha, header, source); err != nil {
+			return "", err
+		}
+	}
+
+	return sha, nil
+}
+
+const (
+	TreeBlobMode string = "100644"
+	TreeDirMode  string = "040000"
+)
+
+func WriteTree(gitPath string, root string, ignoredPaths []string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("Failed to read directory: %w", err)
+	}
+
+	entriesBytes := make([]byte, 0)
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if slices.Contains(ignoredPaths, path) {
+			continue
+		}
+
+		var sha string
+		var mode string
+		if entry.IsDir() {
+			sha, err = WriteTree(gitPath, path, ignoredPaths)
+			if err != nil {
+				return "", err
+			}
+			mode = TreeDirMode
+		} else {
+			sha, err = WriteBlob(gitPath, path, true)
+			if err != nil {
+				return "", err
+			}
+			mode = TreeBlobMode
+		}
+		name := entry.Name()
+
+		shaBytes, _ := hex.DecodeString(sha)
+		entryBytes := append([]byte(fmt.Sprintf("%s %s\x00", mode, name)), shaBytes...)
+		entriesBytes = append(entriesBytes, entryBytes...)
+	}
+
+	header := objectHeader("tree", len(entriesBytes))
+	entryReader := bytes.NewReader(entriesBytes)
+	sha, err := hashObject(header, entryReader, true)
+	if err != nil {
+		return "", err
+	}
+
+	if err := writeObject(gitPath, sha, header, entryReader); err != nil {
+		return "", err
+	}
+
+	return sha, nil
 }
