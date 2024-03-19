@@ -75,6 +75,7 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 		return fmt.Errorf("Expected tree object, got: %s", objectType)
 	}
 
+	lines := make([]string, 0)
 	for size > 0 {
 		bytes, err := reader.ReadBytes('\x00')
 		if err != nil {
@@ -90,21 +91,20 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 
 		var line string
 		if nameOnly {
-			line = name + "\n"
+			line = name
 		} else {
 			objectType := "blob"
 			if mode == objects.TreeDirMode {
 				objectType = "tree"
 			}
-			line = fmt.Sprintf("%s %s %s\t%s\n", mode, objectType, hex.EncodeToString(shaBytes), name)
+			line = fmt.Sprintf("%s %s %s\t%s", mode, objectType, hex.EncodeToString(shaBytes), name)
 		}
 
-		if _, err := g.Output.Write([]byte(line)); err != nil {
-			return fmt.Errorf("Failed to write entry: %w", err)
-		}
-
+		lines = append(lines, line)
 		size = size - len(bytes) - 20
 	}
+
+	_, _ = g.Output.Write([]byte(strings.Join(lines, "\n")))
 
 	return nil
 }
