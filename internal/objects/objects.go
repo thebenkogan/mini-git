@@ -118,33 +118,60 @@ func WriteTree(gitPath string, root string, ignoredPaths []string) (string, erro
 		return "", fmt.Errorf("Failed to read directory: %w", err)
 	}
 
-	entriesBytes := make([]byte, 0)
-	for _, entry := range entries {
+	type entryResult struct {
+		bytes []byte
+		index int
+		err   error
+	}
+	entriesChan := make(chan entryResult, len(entries))
+	numEntries := 0
+
+	for i, entry := range entries {
 		path := filepath.Join(root, entry.Name())
 		if slices.Contains(ignoredPaths, path) {
 			continue
 		}
+		numEntries++
 
-		var sha string
-		var mode string
-		if entry.IsDir() {
-			sha, err = WriteTree(gitPath, path, ignoredPaths)
-			if err != nil {
-				return "", err
+		go func() {
+			var sha string
+			var mode string
+			var err error
+			if entry.IsDir() {
+				sha, err = WriteTree(gitPath, path, ignoredPaths)
+				mode = TreeDirMode
+			} else {
+				sha, err = WriteBlob(gitPath, path, true)
+				mode = TreeBlobMode
 			}
-			mode = TreeDirMode
-		} else {
-			sha, err = WriteBlob(gitPath, path, true)
+			name := entry.Name()
+
 			if err != nil {
-				return "", err
+				entriesChan <- entryResult{err: err}
+				return
 			}
-			mode = TreeBlobMode
+
+			shaBytes, _ := hex.DecodeString(sha)
+			entryBytes := append([]byte(fmt.Sprintf("%s %s\x00", mode, name)), shaBytes...)
+			entriesChan <- entryResult{bytes: entryBytes, index: i}
+		}()
+	}
+
+	results := make([]entryResult, 0)
+	for i := 0; i < numEntries; i++ {
+		result := <-entriesChan
+		if result.err != nil {
+			return "", result.err
 		}
-		name := entry.Name()
+		results = append(results, result)
+	}
+	slices.SortFunc(results, func(a, b entryResult) int {
+		return a.index - b.index
+	})
 
-		shaBytes, _ := hex.DecodeString(sha)
-		entryBytes := append([]byte(fmt.Sprintf("%s %s\x00", mode, name)), shaBytes...)
-		entriesBytes = append(entriesBytes, entryBytes...)
+	entriesBytes := make([]byte, 0)
+	for _, result := range results {
+		entriesBytes = append(entriesBytes, result.bytes...)
 	}
 
 	header := objectHeader("tree", len(entriesBytes))
