@@ -37,6 +37,12 @@ func main() {
 		err = git.LsTree(lsTreeCmd.Args()[0], *nameOnlyPtr)
 	case "write-tree":
 		err = git.WriteTree()
+	case "commit-tree":
+		commitTreeCmd := flag.NewFlagSet("commit-tree", flag.ExitOnError)
+		parentPtr := commitTreeCmd.String("p", "", "sha hash of the parent commit")
+		messagePtr := commitTreeCmd.String("m", "", "commit message")
+		_ = commitTreeCmd.Parse(os.Args[3:])
+		err = git.CommitTree(os.Args[2], *messagePtr, *parentPtr)
 	default:
 		err = fmt.Errorf("Unknown command %s", command)
 	}

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func ReadObject(gitPath string, sha string) (*bufio.Reader, string, int, error) {
@@ -102,6 +103,41 @@ func WriteBlob(gitPath string, path string, write bool) (string, error) {
 		if err := writeObject(gitPath, sha, header, source); err != nil {
 			return "", err
 		}
+	}
+
+	return sha, nil
+}
+
+const DEFAULT_AUTHOR_NAME string = "Ben"
+const DEFAULT_AUTHOR_EMAIL string = "benkogan9@gmail.com"
+
+func WriteCommit(gitPath, treeSha, message, parentSha string) (string, error) {
+	contents := make([]byte, 0)
+	contents = append(contents, []byte(fmt.Sprintf("tree %s\n", treeSha))...)
+	if parentSha != "" {
+		contents = append(contents, []byte(fmt.Sprintf("parent %s\n", parentSha))...)
+	}
+
+	t := time.Now()
+	dateSeconds := t.Unix()
+	timezone := t.Format("-0700")
+
+	authorLine := fmt.Sprintf("author %s <%s> %d %s\n", DEFAULT_AUTHOR_NAME, DEFAULT_AUTHOR_EMAIL, dateSeconds, timezone)
+	contents = append(contents, []byte(authorLine)...)
+	committerLine := fmt.Sprintf("committer %s <%s> %d %s\n\n", DEFAULT_AUTHOR_NAME, DEFAULT_AUTHOR_EMAIL, dateSeconds, timezone)
+	contents = append(contents, []byte(committerLine)...)
+
+	contents = append(contents, []byte(fmt.Sprintf("%s\n", message))...)
+
+	header := objectHeader("commit", len(contents))
+	commitReader := bytes.NewReader(contents)
+	sha, err := hashObject(header, commitReader, true)
+	if err != nil {
+		return "", err
+	}
+
+	if err := writeObject(gitPath, sha, header, commitReader); err != nil {
+		return "", err
 	}
 
 	return sha, nil

@@ -45,8 +45,8 @@ func (g *Git) CatFile(sha string) error {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
 
-	if objectType != "blob" {
-		return fmt.Errorf("Unsupported object type: %s", objectType)
+	if objectType == "tree" {
+		return fmt.Errorf("Use ls-tree instead")
 	}
 
 	if _, err := io.CopyN(g.Output, reader, int64(size)); err != nil {
@@ -118,6 +118,15 @@ func (g *Git) ignoredPaths() []string {
 
 func (g *Git) WriteTree() error {
 	sha, err := objects.WriteTree(g.GitPath(), g.Root, g.ignoredPaths())
+	if err != nil {
+		return err
+	}
+	_, _ = g.Output.Write([]byte(sha))
+	return nil
+}
+
+func (g *Git) CommitTree(treeSha, message, parentSha string) error {
+	sha, err := objects.WriteCommit(g.GitPath(), treeSha, message, parentSha)
 	if err != nil {
 		return err
 	}
