@@ -16,23 +16,33 @@ import (
 	"time"
 )
 
-func ReadObject(gitPath string, sha string) (*bufio.Reader, string, int, error) {
+type ObjectReader struct {
+	file   *os.File
+	Reader *bufio.Reader
+	Typ    string
+	Size   int
+}
+
+func (or *ObjectReader) Close() {
+	or.file.Close()
+}
+
+func ReadObject(gitPath string, sha string) (*ObjectReader, error) {
 	if len(sha) != 40 {
-		return nil, "", 0, fmt.Errorf("Invalid SHA")
+		return nil, fmt.Errorf("Invalid SHA")
 	}
 
 	file, err := os.Open(filepath.Join(gitPath, "objects", sha[:2], sha[2:]))
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("Failed to open object: %w", err)
+		return nil, fmt.Errorf("Failed to open object: %w", err)
 	}
-	defer file.Close()
 
 	zr, _ := zlib.NewReader(file)
 	reader := bufio.NewReader(zr)
 
 	s, err := reader.ReadString('\x00')
 	if err != nil {
-		return nil, "", 0, fmt.Errorf("Failed to read object header: %w", err)
+		return nil, fmt.Errorf("Failed to read object header: %w", err)
 	}
 
 	trimmed := strings.TrimSuffix(s, "\x00")
@@ -40,7 +50,12 @@ func ReadObject(gitPath string, sha string) (*bufio.Reader, string, int, error) 
 	objectType := split[0]
 	size, _ := strconv.Atoi(split[1])
 
-	return reader, objectType, size, nil
+	return &ObjectReader{
+		file:   file,
+		Reader: reader,
+		Typ:    objectType,
+		Size:   size,
+	}, nil
 }
 
 func objectHeader(typ string, size int) string {

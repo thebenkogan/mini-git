@@ -40,16 +40,17 @@ func (g *Git) Init() error {
 }
 
 func (g *Git) CatFile(sha string) error {
-	reader, objectType, size, err := objects.ReadObject(g.GitPath(), sha)
+	object, err := objects.ReadObject(g.GitPath(), sha)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
+	defer object.Close()
 
-	if objectType == "tree" {
+	if object.Typ == "tree" {
 		return fmt.Errorf("Use ls-tree instead")
 	}
 
-	if _, err := io.CopyN(g.Output, reader, int64(size)); err != nil {
+	if _, err := io.CopyN(g.Output, object.Reader, int64(object.Size)); err != nil {
 		return fmt.Errorf("Failed to write contents to output: %w", err)
 	}
 
@@ -66,18 +67,20 @@ func (g *Git) HashObject(path string, write bool) error {
 }
 
 func (g *Git) LsTree(sha string, nameOnly bool) error {
-	reader, objectType, size, err := objects.ReadObject(g.GitPath(), sha)
+	object, err := objects.ReadObject(g.GitPath(), sha)
 	if err != nil {
 		return fmt.Errorf("Failed to open object: %w", err)
 	}
+	defer object.Close()
 
-	if objectType != "tree" {
-		return fmt.Errorf("Expected tree object, got: %s", objectType)
+	if object.Typ != "tree" {
+		return fmt.Errorf("Expected tree object, got: %s", object.Typ)
 	}
 
+	size := object.Size
 	lines := make([]string, 0)
 	for size > 0 {
-		bytes, err := reader.ReadBytes('\x00')
+		bytes, err := object.Reader.ReadBytes('\x00')
 		if err != nil {
 			return fmt.Errorf("Failed to read tree entry: %w", err)
 		}
@@ -85,7 +88,7 @@ func (g *Git) LsTree(sha string, nameOnly bool) error {
 
 		mode, name, _ := strings.Cut(trimmed, " ")
 		shaBytes := make([]byte, 20)
-		if _, err := reader.Read(shaBytes); err != nil {
+		if _, err := object.Reader.Read(shaBytes); err != nil {
 			return fmt.Errorf("Failed to read entry sha: %w", err)
 		}
 
